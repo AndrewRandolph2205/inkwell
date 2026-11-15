@@ -51,5 +51,5 @@
    - **Export:** the Markdown download is checked byte for byte, and the print-layout PDF is rendered and inspected.
    - **Leaving and phones:** presence drops when Bob leaves, and the panel layout was checked at phone width.
 
-   This walkthrough was run locally.
+   This walkthrough was run locally, then against the live deployment after migration 2 had upgraded the live Turso database in place. Existing shares and documents were kept, and each document got a baseline history entry. The original two-user walkthrough was also rerun live to check for regressions; everything passed, and the test documents were deleted afterwards.
 7. **Restart test:** created a document over the API, restarted the server, confirmed the document and the login session were still there, and that deep links (`/d/1`) load after a refresh.
