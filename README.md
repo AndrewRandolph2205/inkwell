@@ -6,6 +6,12 @@ A small full-stack document editor: create and format documents in the browser, 
 
 **Live demo:** https://inkwell-8o3b.onrender.com: sign in with any [demo account](#demo-accounts) (password `password123`). It runs on Render's free plan, so the first visit after a quiet period can take up to a minute to wake up.
 
+**Walkthrough video:** https://www.loom.com/share/da198bc45d3c4b2bafa70a7f33ccdd90
+
+**What's in this submission:** see [SUBMISSION.md](SUBMISSION.md).
+
+![Alice and Bob editing the same document: Bob's list appears in Alice's editor, with presence indicators on both sides](docs/demo.gif)
+
 ## Features
 
 | Requirement | What's implemented |
@@ -46,6 +52,23 @@ A brand-new database is also seeded with three documents so sharing is visible i
 | Carol's private draft | Carol | nobody |
 
 **To try sharing yourself:** sign in as Alice in one window and Bob in a private/incognito window (sessions are per-browser cookies). Alice creates a doc → **Share** → `bob@example.com`. Bob's home page now lists it under *Shared with me*.
+
+## Screenshots
+
+Trying sharing yourself takes one extra step: each user needs their own browser session, e.g. Alice in a normal window and Bob in a private window. These show what to expect.
+
+| | |
+|---|---|
+| ![Login page with one-click demo accounts](docs/screenshots/01-login.png) | ![Home page: My documents and Shared with me](docs/screenshots/02-home.png) |
+| **Login:** one-click demo accounts | **Home:** owned vs shared, with access level |
+| ![Editor with Bob shown as editing and a comment highlight](docs/screenshots/03-editor-presence.png) | ![Share dialog with the three roles explained](docs/screenshots/04-sharing-roles.png) |
+| **Editor:** formatting toolbar, "Bob is editing", highlighted comment | **Sharing:** view, comment or edit |
+| ![Carol's read-only view with the comments panel](docs/screenshots/05-commenter-comments.png) | ![History panel with a version preview and Restore button](docs/screenshots/06-history-restore.png) |
+| **Commenter:** read-only editor, comments on selected text | **History:** preview and restore an earlier version |
+
+<img src="docs/screenshots/07-phone.png" alt="Phone layout of the editor" width="240">
+
+**Phone:** the editor at 390 px wide.
 
 ## Run locally
 

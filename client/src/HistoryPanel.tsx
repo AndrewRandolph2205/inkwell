@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, can, type Doc, type Role, type VersionDetail, type VersionSummary } from "./api";
 import { formatDate } from "./router";
 
@@ -90,7 +91,9 @@ export function HistoryPanel({ docId, role, docVersion, canRestoreNow, onRestore
         </ul>
       )}
 
-      {preview && (
+      {/* Portal to <body>: the panel is position: sticky, which makes it its own stacking context,
+          so a modal rendered inside it would sit underneath the sticky toolbar. */}
+      {preview && createPortal(
         <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setPreview(null)}>
           <div className="card modal preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-title">
             <div className="modal-head">
@@ -119,7 +122,8 @@ export function HistoryPanel({ docId, role, docVersion, canRestoreNow, onRestore
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </aside>
   );

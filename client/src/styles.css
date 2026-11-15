@@ -94,7 +94,7 @@ section h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; 
 .paper .ProseMirror { outline: none; min-height: 60vh; line-height: 1.6; font-size: 16px; }
 .paper .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: #a0a6b1; float: left; height: 0; pointer-events: none; }
 .paper .ProseMirror blockquote { border-left: 3px solid var(--border); margin-left: 0; padding-left: 14px; color: #4b5260; }
-.paper .ProseMirror li p { margin: .15em 0; }
+.paper .ProseMirror li p, .preview-body li p { margin: .15em 0; }
 .paper .ProseMirror h1 { font-size: 28px; } .paper .ProseMirror h2 { font-size: 22px; } .paper .ProseMirror h3 { font-size: 18px; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 20, 30, .35); display: grid; place-items: center; z-index: 20; padding: 16px; }

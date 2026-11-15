@@ -28,6 +28,7 @@
   - **The comments/history panel only covered part of the screen on phones.** The desktop rule `align-self: start` also applies to fixed-position boxes in current Chromium, so the panel shrank to its content. Found by measuring the panel's computed size after a screenshot looked wrong.
   - **Markdown export left whitespace-only lines between list items.** Found by an exact-output test rather than a "contains" check.
   - The header also needed reworking once four new buttons squeezed the title. That was found in the screenshots, not by any test.
+  - **The toolbar drew on top of the version-preview dialog**, hiding its heading. The dialog was rendered inside the history panel, and the panel's `position: sticky` gives it its own stacking layer, so the dialog's z-index only applied inside the panel. Every test passed because the buttons still worked. It was spotted while reviewing the screenshots for the README, and fixed by rendering the dialog under `<body>` with a React portal.
 - **Scope decisions.** Real-time co-editing (Yjs), a router library and a UI component library were left out. Each would add weight without improving what's being evaluated here.
 
 ## How correctness, UX and reliability were verified
