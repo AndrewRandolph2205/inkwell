@@ -30,8 +30,15 @@
 ## How correctness, UX and reliability were verified
 
 1. **Typecheck** (`tsc`, strict) across server and client after each change.
-2. **11 API integration tests** against the real app and SQLite: permissions, sanitization, validation, conflicts, imports.
+2. **15 API integration tests** against the real app and SQLite: permissions, sanitization, validation, conflicts, imports, demo seeding, cleaning up shares on delete, and database config.
 3. **Scripted browser walkthrough** (Playwright, two users): log in → create → rename → apply each kind of formatting → wait for "Saved" → **reload and check every tag survived** → share with an unknown email (error shown) and with Bob as a viewer → import `.docx` and an unsupported `.pdf` (rejected) → Bob sees *Shared with me / View only* and gets a read-only editor with no toolbar → upgrade Bob to editor → Bob saves → Alice's stale edit shows the conflict banner.
 4. **Screenshots reviewed** at desktop and phone width (390 px) for layout, spacing and clarity of the status messages. This prompted tightening list spacing.
-5. **Not verified in the sandbox:** a live connection to a real Turso database, because there were no Turso credentials and the libSQL server binary couldn't be downloaded. The tests and the browser run use the same client library in local-file mode. The first real Turso connection happens on deploy. Signing in confirms it, because `/api/health` doesn't touch the database.
+5. **Live deployment test** (Render free + Turso), at https://inkwell-8o3b.onrender.com. The sandbox couldn't test against a real Turso database before deploy (no credentials, and the libSQL server binary couldn't be downloaded), so the same two-user walkthrough was rerun against the deployed app. Everything passed:
+   - **Formatting:** every format survived a reload.
+   - **Upload:** `.docx` import kept its heading, bold, italic and lists; `.pdf` was rejected by the UI and by the server (`400`).
+   - **Permissions:** a viewer's direct API write got `403`, and a non-shared user's read got `404`.
+   - **Conflicts:** the editor upgrade worked, and Alice's stale edit showed the conflict banner. After reloading she saw Bob's change.
+   - **Security:** the session cookie is `HttpOnly; Secure; SameSite=Lax`, so the HTTPS proxy setup works.
+
+   The local script assumed near-instant saves. Live, the "✓ Saved" indicator could show before the last debounced edit had been sent, so the script now waits past the debounce first. The test uses clearly labeled documents and deletes them afterwards.
 6. **Restart test:** created a document over the API, restarted the server, confirmed the document and the login session were still there, and that deep links (`/d/1`) load after a refresh.
