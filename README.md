@@ -4,7 +4,7 @@ A small full-stack document editor: create and format documents in the browser, 
 
 **Stack:** React 18 + Tiptap (ProseMirror) · Node 22 + Express 5 · SQLite via libSQL (local file in development, [Turso](https://turso.tech) in production) · Vitest + Supertest
 
-**Live demo:** _add your Render URL here after deploying (see [Deploy](#deploy-free-render--turso))_
+**Live demo:** https://inkwell-8o3b.onrender.com: sign in with any [demo account](#demo-accounts) (password `password123`). It runs on Render's free plan, so the first visit after a quiet period can take up to a minute to wake up.
 
 ## Features
 
