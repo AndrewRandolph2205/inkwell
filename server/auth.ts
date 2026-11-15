@@ -1,19 +1,6 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
-import type { DB } from "./db.js";
-
-export function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, salt, 32).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-export function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(":");
-  if (!salt || !hash) return false;
-  const candidate = scryptSync(password, salt, 32);
-  return timingSafeEqual(candidate, Buffer.from(hash, "hex"));
-}
+import { type DB, get, run } from "./db.js";
 
 export interface User {
   id: number;
@@ -32,21 +19,22 @@ declare global {
 
 export const SESSION_COOKIE = "sid";
 
-export function createSession(db: DB, userId: number): string {
+export async function createSession(db: DB, userId: number): Promise<string> {
   const token = randomBytes(32).toString("hex");
-  db.prepare("INSERT INTO sessions (token, user_id) VALUES (?, ?)").run(token, userId);
+  await run(db, "INSERT INTO sessions (token, user_id) VALUES (?, ?)", [token, userId]);
   return token;
 }
 
 export function loadUser(db: DB) {
-  const stmt = db.prepare(
-    `SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`,
-  );
-  return (req: Request, _res: Response, next: NextFunction) => {
+  return async (req: Request, _res: Response, next: NextFunction) => {
     const token = req.cookies?.[SESSION_COOKIE];
     if (typeof token === "string") {
-      const row = stmt.get(token) as User | undefined;
-      if (row) req.user = { id: row.id, email: row.email, name: row.name };
+      const row = await get<User>(
+        db,
+        "SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+        [token],
+      );
+      if (row) req.user = row;
     }
     next();
   };

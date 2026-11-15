@@ -3,14 +3,15 @@
   "version": "1.0.0",
   "description": "A small collaborative document editor: rich text, file import, sharing.",
   "scripts": {
-    "dev": "concurrently -k -n api,web \"node --disable-warning=ExperimentalWarning --import tsx --watch server/index.ts\" \"vite\"",
+    "dev": "concurrently -k -n api,web \"node --import tsx --watch server/index.ts\" \"vite\"",
     "build": "vite build",
-    "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning --import tsx server/index.ts",
+    "start": "NODE_ENV=production DATABASE_PATH=${DATABASE_PATH:-data/docs.db} node --import tsx server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc"
   },
   "license": "ISC",
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "cookie-parser": "^1.4.7",
     "express": "^5.3.0",
     "mammoth": "^1.13.0",
@@ -46,6 +47,6 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": ">=22.13"
+    "node": ">=20.6"
   }
 }

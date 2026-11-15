@@ -2,10 +2,13 @@
 
 ## Shape
 
-One Node process. Express serves a JSON API under `/api` and the built React app for every other path. SQLite is the store. That's one thing to run locally, one container to deploy, and no separate database service to provision, which is right for this scope.
+One Node process. Express serves a JSON API under `/api` and the built React app for every other path. Storage is SQLite through the libSQL client. In development and tests that's a local file (or in-memory), so there's nothing to install. In production it's a hosted [Turso](https://turso.tech) database. The same client, schema and SQL run in both, and only the connection URL changes.
 
 ```
-Browser (React + Tiptap) ──fetch /api──▶ Express ──▶ node:sqlite (users, sessions, documents, document_shares)
+Browser (React + Tiptap) ──fetch /api──▶ Express ──▶ libSQL client ──▶ local SQLite file  (dev / tests)
+                                                                  └──▶ Turso over HTTPS   (production)
+
+Tables: users, sessions, documents, document_shares
 ```
 
 ## What I prioritized, and why
@@ -29,12 +32,19 @@ Browser (React + Tiptap) ──fetch /api──▶ Express ──▶ node:sqlite
 | Choice | Why it's fine here | What I'd do next |
 |---|---|---|
 | Seeded users, email+password, opaque session token in an httpOnly cookie | Shows a real auth boundary without building sign-up/reset flows | OAuth/SSO, session expiry and rotation, CSRF token (currently relies on `SameSite=Lax` + JSON-only API) |
-| SQLite via built-in `node:sqlite` | No native build, zero ops, transactional, easy to inspect | Postgres once there are multiple app instances |
+| SQLite via libSQL; Turso in production | Free hosting with real persistence: Render's free plan has no disk, but Turso's free plan is a hosted SQLite. No dialect change between dev and prod. | Postgres if the data model grows relational features SQLite lacks |
 | Conflict = reject + reload | Prevents data loss; simple to reason about | Real-time collaboration (Yjs + Tiptap Collaboration) |
 | Share by email with existing users only | Demonstrates the owner/grantee model clearly | Invitations for unknown emails, link sharing, groups |
 | `tsx` runs the TypeScript server in production | One less build step; startup cost is negligible | Precompile with `tsc` / esbuild |
 | No rate limiting | Demo scope | Rate limit login and upload |
 
+## Hosting decisions
+
+- **Render free + Turso free** gives a public URL and durable data at no cost. The trade-off is Render's cold start (up to about a minute after 15 idle minutes).
+- **Fail fast on missing storage.** In production the server refuses to start without a Turso URL or an explicit `DATABASE_PATH`. Otherwise a misconfigured deploy would "work" while writing to a temporary disk that is wiped on the next restart.
+- **No reliance on `ON DELETE CASCADE`.** Turso's HTTP protocol doesn't guarantee a per-connection `PRAGMA foreign_keys = ON`, so deleting a document removes its shares explicitly in the same batch.
+- **Seeded demo content** on an empty database, so a reviewer immediately sees owned vs shared documents and both access levels.
+
 ## Testing strategy
 
-The highest-value automated tests are API integration tests (Supertest against the real Express app and an in-memory SQLite). They exercise the real SQL, validation, sanitization and permission logic with no mocks, and run in about 2 s. The browser flows (formatting, autosave, reload, import, sharing between two users, conflict banner, mobile layout) were checked with a Playwright script during development; see AI_WORKFLOW.md.
+The highest-value automated tests are API integration tests (Supertest against the real Express app and an in-memory SQLite). They exercise the real SQL (through the same libSQL client used in production), validation, sanitization and permission logic with no mocks, and run in about 2 s. The browser flows (formatting, autosave, reload, import, sharing between two users, conflict banner, mobile layout) were checked with a Playwright script during development; see AI_WORKFLOW.md.

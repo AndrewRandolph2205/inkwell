@@ -9,11 +9,12 @@ RUN npm run build
 # ---- runtime: production deps + server source + built client ----
 FROM node:22-slim
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 DATABASE_PATH=/data/docs.db
+ENV NODE_ENV=production PORT=3000
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY server ./server
 COPY --from=build /app/dist ./dist
-VOLUME /data
 EXPOSE 3000
-CMD ["node", "--disable-warning=ExperimentalWarning", "--import", "tsx", "server/index.ts"]
+# Database: set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN (hosted), or DATABASE_PATH on a mounted volume.
+# The server refuses to start in production with neither, rather than silently losing data.
+CMD ["node", "--import", "tsx", "server/index.ts"]

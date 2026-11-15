@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
-import { openDb, SEED_PASSWORD } from "./db.js";
+import { openDb, seedDemoDocuments, dbConfigFromEnv, SEED_PASSWORD, type DB } from "./db.js";
 import { createApp } from "./app.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+let db: DB;
 let app: ReturnType<typeof createApp>;
 
-beforeEach(() => {
-  app = createApp(openDb(":memory:"));
+beforeEach(async () => {
+  db = await openDb(":memory:");
+  app = createApp(db);
 });
 
 async function login(email: string) {
@@ -175,5 +177,42 @@ describe("file import", () => {
       .post("/api/documents/import")
       .attach("file", Buffer.alloc(3 * 1024 * 1024, 97), "big.txt")
       .expect(413);
+  });
+});
+
+describe("demo seed data", () => {
+  it("seeds owned and shared documents once, so a fresh deploy demonstrates sharing", async () => {
+    await seedDemoDocuments(db);
+    await seedDemoDocuments(db); // idempotent: second run is a no-op
+    const bob = await login("bob@example.com");
+    const { body } = await bob.get("/api/documents").expect(200);
+    expect(body.owned.map((d: { title: string }) => d.title)).toEqual(["Team meeting notes"]);
+    expect(body.shared).toEqual([expect.objectContaining({ title: "Welcome to Inkwell", role: "editor", ownerName: "Alice Chen" })]);
+    const carol = await login("carol@example.com");
+    const carolDocs = (await carol.get("/api/documents")).body;
+    expect(carolDocs.shared).toEqual([expect.objectContaining({ title: "Welcome to Inkwell", role: "viewer" })]);
+  });
+
+  it("deleting a document also removes its shares", async () => {
+    await seedDemoDocuments(db);
+    const alice = await login("alice@example.com");
+    const welcome = (await alice.get("/api/documents")).body.owned[0];
+    await alice.delete(`/api/documents/${welcome.id}`).expect(204);
+    const left = await db.execute({ sql: "SELECT COUNT(*) AS n FROM document_shares WHERE document_id = ?", args: [welcome.id] });
+    expect(left.rows[0].n).toBe(0);
+    const bob = await login("bob@example.com");
+    expect((await bob.get("/api/documents")).body.shared).toEqual([]);
+  });
+});
+
+describe("database config", () => {
+  it("uses Turso when TURSO_DATABASE_URL is set", () => {
+    expect(dbConfigFromEnv({ TURSO_DATABASE_URL: "libsql://x.turso.io", TURSO_AUTH_TOKEN: "t" })).toEqual({
+      url: "libsql://x.turso.io", authToken: "t",
+    });
+  });
+
+  it("refuses to start in production without a persistent database", () => {
+    expect(() => dbConfigFromEnv({ NODE_ENV: "production" })).toThrow(/TURSO_DATABASE_URL/);
   });
 });

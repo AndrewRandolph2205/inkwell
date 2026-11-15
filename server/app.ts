@@ -4,10 +4,9 @@ import multer from "multer";
 import { z } from "zod";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { DB } from "./db.js";
-import {
-  SESSION_COOKIE, createSession, loadUser, requireUser, verifyPassword,
-} from "./auth.js";
+import { type DB, all, get, run } from "./db.js";
+import { SESSION_COOKIE, createSession, loadUser, requireUser } from "./auth.js";
+import { verifyPassword } from "./passwords.js";
 import {
   ImportError, MAX_UPLOAD_BYTES, SUPPORTED_IMPORT_TYPES, fileToDocument, sanitizeContent,
 } from "./content.js";
@@ -29,6 +28,8 @@ class HttpError extends Error {
     super(message);
   }
 }
+
+const CONFLICT_MESSAGE = "This document was changed elsewhere. Reload to get the latest version.";
 
 const loginSchema = z.object({
   email: z.string().trim().email("Enter a valid email."),
@@ -55,6 +56,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return r.data;
 }
 
+// Express 5 forwards rejected promises from async handlers to the error middleware.
 export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: boolean } = {}) {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
@@ -64,28 +66,28 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
 
   /** Resolve the caller's role on a document, or throw 404 (we don't reveal existence to outsiders). */
-  function access(docId: number, userId: number): { doc: DocRow; role: Role } {
-    const doc = db.prepare("SELECT * FROM documents WHERE id = ?").get(docId) as DocRow | undefined;
+  async function access(docId: number, userId: number): Promise<{ doc: DocRow; role: Role }> {
+    const doc = await get<DocRow>(db, "SELECT * FROM documents WHERE id = ?", [docId]);
     if (!doc) throw new HttpError(404, "Document not found.");
     if (doc.owner_id === userId) return { doc, role: "owner" };
-    const share = db
-      .prepare("SELECT role FROM document_shares WHERE document_id = ? AND user_id = ?")
-      .get(docId, userId) as { role: Role } | undefined;
+    const share = await get<{ role: Role }>(
+      db, "SELECT role FROM document_shares WHERE document_id = ? AND user_id = ?", [docId, userId],
+    );
     if (!share) throw new HttpError(404, "Document not found.");
     return { doc, role: share.role };
   }
 
   function listShares(docId: number) {
-    return db
-      .prepare(
-        `SELECT u.id AS userId, u.email, u.name, s.role FROM document_shares s
-         JOIN users u ON u.id = s.user_id WHERE s.document_id = ? ORDER BY u.name`,
-      )
-      .all(docId);
+    return all(
+      db,
+      `SELECT u.id AS userId, u.email, u.name, s.role FROM document_shares s
+       JOIN users u ON u.id = s.user_id WHERE s.document_id = ? ORDER BY u.name`,
+      [docId],
+    );
   }
 
-  function serializeDoc(doc: DocRow, role: Role) {
-    const owner = db.prepare("SELECT id, email, name FROM users WHERE id = ?").get(doc.owner_id);
+  async function serializeDoc(doc: DocRow, role: Role) {
+    const owner = await get(db, "SELECT id, email, name FROM users WHERE id = ?", [doc.owner_id]);
     return {
       id: doc.id,
       title: doc.title,
@@ -95,36 +97,34 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
       updatedAt: doc.updated_at,
       owner,
       role,
-      shares: role === "owner" ? listShares(doc.id) : undefined,
+      shares: role === "owner" ? await listShares(doc.id) : undefined,
     };
   }
 
-  function insertDoc(ownerId: number, title: string, content: string) {
-    const r = db
-      .prepare("INSERT INTO documents (owner_id, title, content) VALUES (?, ?, ?)")
-      .run(ownerId, title, content);
-    return Number(r.lastInsertRowid);
+  async function insertDoc(ownerId: number, title: string, content: string) {
+    const r = await run(db, "INSERT INTO documents (owner_id, title, content) VALUES (?, ?, ?)", [ownerId, title, content]);
+    return r.lastInsertRowid;
   }
 
   // ---------- auth ----------
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const { email, password } = parse(loginSchema, req.body);
-    const row = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as
-      | { id: number; email: string; name: string; password_hash: string }
-      | undefined;
+    const row = await get<{ id: number; email: string; name: string; password_hash: string }>(
+      db, "SELECT * FROM users WHERE email = ?", [email],
+    );
     if (!row || !verifyPassword(password, row.password_hash)) {
       throw new HttpError(401, "Incorrect email or password.");
     }
-    const token = createSession(db, row.id);
+    const token = await createSession(db, row.id);
     res.cookie(SESSION_COOKIE, token, {
       httpOnly: true, sameSite: "lax", secure: !!opts.secureCookies, maxAge: 1000 * 60 * 60 * 24 * 7,
     });
     res.json({ user: { id: row.id, email: row.email, name: row.name } });
   });
 
-  app.post("/api/auth/logout", (req, res) => {
+  app.post("/api/auth/logout", async (req, res) => {
     const token = req.cookies?.[SESSION_COOKIE];
-    if (token) db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+    if (token) await run(db, "DELETE FROM sessions WHERE token = ?", [token]);
     res.clearCookie(SESSION_COOKIE);
     res.status(204).end();
   });
@@ -134,30 +134,32 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
   // ---------- documents ----------
   app.use("/api/documents", requireUser);
 
-  app.get("/api/documents", (req, res) => {
+  app.get("/api/documents", async (req, res) => {
     const uid = req.user!.id;
-    const owned = db
-      .prepare(
+    const [owned, shared] = await Promise.all([
+      all(
+        db,
         `SELECT d.id, d.title, d.updated_at AS updatedAt,
                 (SELECT COUNT(*) FROM document_shares s WHERE s.document_id = d.id) AS shareCount
          FROM documents d WHERE d.owner_id = ? ORDER BY d.updated_at DESC, d.id DESC`,
-      )
-      .all(uid);
-    const shared = db
-      .prepare(
+        [uid],
+      ),
+      all(
+        db,
         `SELECT d.id, d.title, d.updated_at AS updatedAt, s.role, u.name AS ownerName, u.email AS ownerEmail
          FROM document_shares s JOIN documents d ON d.id = s.document_id JOIN users u ON u.id = d.owner_id
          WHERE s.user_id = ? ORDER BY d.updated_at DESC, d.id DESC`,
-      )
-      .all(uid);
+        [uid],
+      ),
+    ]);
     res.json({ owned, shared });
   });
 
-  app.post("/api/documents", (req, res) => {
+  app.post("/api/documents", async (req, res) => {
     const { title } = parse(createSchema, req.body ?? {});
-    const id = insertDoc(req.user!.id, title ?? "Untitled document", "");
-    const { doc, role } = access(id, req.user!.id);
-    res.status(201).json(serializeDoc(doc, role));
+    const id = await insertDoc(req.user!.id, title ?? "Untitled document", "");
+    const { doc, role } = await access(id, req.user!.id);
+    res.status(201).json(await serializeDoc(doc, role));
   });
 
   app.post(
@@ -178,80 +180,87 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
         if (e instanceof ImportError) throw new HttpError(400, e.message);
         throw e;
       }
-      const id = insertDoc(req.user!.id, parsed.title, parsed.content);
-      const { doc, role } = access(id, req.user!.id);
-      res.status(201).json(serializeDoc(doc, role));
+      const id = await insertDoc(req.user!.id, parsed.title, parsed.content);
+      const { doc, role } = await access(id, req.user!.id);
+      res.status(201).json(await serializeDoc(doc, role));
     },
   );
 
-  app.get("/api/documents/:id", (req, res) => {
-    const { doc, role } = access(parse(idSchema, req.params.id), req.user!.id);
-    res.json(serializeDoc(doc, role));
+  app.get("/api/documents/:id", async (req, res) => {
+    const { doc, role } = await access(parse(idSchema, req.params.id), req.user!.id);
+    res.json(await serializeDoc(doc, role));
   });
 
-  app.patch("/api/documents/:id", (req, res) => {
+  app.patch("/api/documents/:id", async (req, res) => {
     const id = parse(idSchema, req.params.id);
     const body = parse(updateSchema, req.body);
-    const { doc, role } = access(id, req.user!.id);
+    const { doc, role } = await access(id, req.user!.id);
     if (role === "viewer") throw new HttpError(403, "You have view-only access to this document.");
     // Optimistic concurrency: reject writes based on a stale copy instead of silently overwriting.
     if (body.baseVersion !== doc.version) {
-      throw new HttpError(409, "This document was changed elsewhere. Reload to get the latest version.", {
-        currentVersion: doc.version,
-      });
+      throw new HttpError(409, CONFLICT_MESSAGE, { currentVersion: doc.version });
     }
     const title = body.title ?? doc.title;
     const content = body.content !== undefined ? sanitizeContent(body.content) : doc.content;
-    const r = db
-      .prepare(
-        `UPDATE documents SET title = ?, content = ?, version = version + 1, updated_at = datetime('now')
-         WHERE id = ? AND version = ?`,
-      )
-      .run(title, content, id, doc.version);
-    if (r.changes === 0) throw new HttpError(409, "This document was changed elsewhere. Reload to get the latest version.");
-    const updated = access(id, req.user!.id);
-    res.json(serializeDoc(updated.doc, updated.role));
+    // The version check is repeated in the UPDATE itself, so two racing writers can't both win.
+    const r = await run(
+      db,
+      `UPDATE documents SET title = ?, content = ?, version = version + 1, updated_at = datetime('now')
+       WHERE id = ? AND version = ?`,
+      [title, content, id, doc.version],
+    );
+    if (r.changes === 0) throw new HttpError(409, CONFLICT_MESSAGE);
+    const updated = await access(id, req.user!.id);
+    res.json(await serializeDoc(updated.doc, updated.role));
   });
 
-  app.delete("/api/documents/:id", (req, res) => {
+  app.delete("/api/documents/:id", async (req, res) => {
     const id = parse(idSchema, req.params.id);
-    const { role } = access(id, req.user!.id);
+    const { role } = await access(id, req.user!.id);
     if (role !== "owner") throw new HttpError(403, "Only the owner can delete this document.");
-    db.prepare("DELETE FROM documents WHERE id = ?").run(id);
+    await db.batch(
+      [
+        { sql: "DELETE FROM document_shares WHERE document_id = ?", args: [id] },
+        { sql: "DELETE FROM documents WHERE id = ?", args: [id] },
+      ],
+      "write",
+    );
     res.status(204).end();
   });
 
   // ---------- sharing (owner only) ----------
-  function requireOwner(req: Request) {
+  async function requireOwner(req: Request) {
     const id = parse(idSchema, req.params.id);
-    const { doc, role } = access(id, req.user!.id);
+    const { doc, role } = await access(id, req.user!.id);
     if (role !== "owner") throw new HttpError(403, "Only the owner can manage sharing.");
     return doc;
   }
 
-  app.get("/api/documents/:id/shares", (req, res) => {
-    const doc = requireOwner(req);
-    res.json(listShares(doc.id));
+  app.get("/api/documents/:id/shares", async (req, res) => {
+    const doc = await requireOwner(req);
+    res.json(await listShares(doc.id));
   });
 
-  app.post("/api/documents/:id/shares", (req, res) => {
-    const doc = requireOwner(req);
+  app.post("/api/documents/:id/shares", async (req, res) => {
+    const doc = await requireOwner(req);
     const { email, role } = parse(shareSchema, req.body);
-    const target = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: number } | undefined;
+    const target = await get<{ id: number }>(db, "SELECT id FROM users WHERE email = ?", [email]);
     if (!target) throw new HttpError(404, `No user with email ${email}.`);
     if (target.id === doc.owner_id) throw new HttpError(400, "You already own this document.");
-    db.prepare(
+    await run(
+      db,
       `INSERT INTO document_shares (document_id, user_id, role) VALUES (?, ?, ?)
        ON CONFLICT (document_id, user_id) DO UPDATE SET role = excluded.role`,
-    ).run(doc.id, target.id, role);
-    res.status(201).json(listShares(doc.id));
+      [doc.id, target.id, role],
+    );
+    res.status(201).json(await listShares(doc.id));
   });
 
-  app.delete("/api/documents/:id/shares/:userId", (req, res) => {
-    const doc = requireOwner(req);
+  app.delete("/api/documents/:id/shares/:userId", async (req, res) => {
+    const doc = await requireOwner(req);
     const userId = parse(idSchema, req.params.userId);
-    db.prepare("DELETE FROM document_shares WHERE document_id = ? AND user_id = ?").run(doc.id, userId);
-    res.json(listShares(doc.id));
+    await run(db, "DELETE FROM document_shares WHERE document_id = ? AND user_id = ?", [doc.id, userId]);
+    res.json(await listShares(doc.id));
   });
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));

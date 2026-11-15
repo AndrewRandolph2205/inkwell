@@ -1,14 +1,14 @@
-# One-click deploy on Render: Dashboard → New → Blueprint → pick this repo.
+# Render Blueprint: Dashboard → New → Blueprint → select this repo.
+# Runs on Render's free plan; data lives in Turso (free plan), so restarts and redeploys don't lose it.
 services:
   - type: web
     name: inkwell
     runtime: docker
-    plan: starter          # persistent disks need a paid instance; see README for the free-tier caveat
+    plan: free
+    region: oregon            # pair with a Turso database in aws-us-west-2 for low latency
     healthCheckPath: /api/health
     envVars:
-      - key: DATABASE_PATH
-        value: /data/docs.db
-    disk:
-      name: inkwell-data
-      mountPath: /data
-      sizeGB: 1
+      - key: TURSO_DATABASE_URL   # e.g. libsql://inkwell-<you>.aws-us-west-2.turso.io
+        sync: false               # Render asks for the value when you create the Blueprint
+      - key: TURSO_AUTH_TOKEN
+        sync: false
