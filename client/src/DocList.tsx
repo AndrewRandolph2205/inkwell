@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, MAX_UPLOAD_MB, SUPPORTED_IMPORT, type OwnedSummary, type SharedSummary } from "./api";
+import { api, MAX_UPLOAD_MB, ROLE_LABEL, SUPPORTED_IMPORT, type OwnedSummary, type SharedSummary } from "./api";
 import { formatDate, navigate } from "./router";
 
 export function DocList() {
@@ -107,7 +107,7 @@ export function DocList() {
                       <span className="doc-icon shared" aria-hidden>⇄</span>
                       <span className="doc-title">{d.title}</span>
                     </a>
-                    <span className={`badge ${d.role}`}>{d.role === "editor" ? "Can edit" : "View only"}</span>
+                    <span className={`badge ${d.role}`}>{ROLE_LABEL[d.role]}</span>
                     <span className="muted small">from {d.ownerName}</span>
                     <span className="muted small date">Edited {formatDate(d.updatedAt)}</span>
                   </li>

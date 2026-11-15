@@ -45,6 +45,22 @@ Tables: users, sessions, documents, document_shares
 - **No reliance on `ON DELETE CASCADE`.** Turso's HTTP protocol doesn't guarantee a per-connection `PRAGMA foreign_keys = ON`, so deleting a document removes its shares explicitly in the same batch.
 - **Seeded demo content** on an empty database, so a reviewer immediately sees owned vs shared documents and both access levels.
 
+## Enhancements: design choices
+
+**Roles as a ladder (viewer < commenter < editor < owner).** One `access(db, docId, userId, action)` check in `server/permissions.ts` maps each action (`read`, `comment`, `edit`, `manage`) to the minimum role it needs. Adding the commenter role was one entry in that table rather than new checks spread across routes. The client mirrors the table only to decide what to show; the server decides what's allowed.
+
+**Schema migrations.** The commenter role meant changing a `CHECK` constraint on a live Turso database that already held data. SQLite can't alter constraints, so migration 2 rebuilds the table. Migrations are numbered, recorded in `schema_migrations`, and each runs as one transactional batch, so a failed upgrade leaves the old schema intact. A test builds a database with the *original* schema and data, migrates it twice, and checks nothing was lost.
+
+**Presence by polling, not WebSockets.** Each open editor sends a heartbeat every 5 s (`POST /presence`), and the response says who is there, the latest version, the last editor, and the open-comment count. Polling was chosen because it is stateless and survives Render's free plan putting the server to sleep, network drops and redeploys, and it needs no reconnect logic. A 5 s delay is fine for "who's here" indicators. Presence is held in memory, which is correct for one instance. With several instances it would move to Redis or a Turso table, and the `PresenceTracker` interface wouldn't change.
+
+**Live updates without real-time co-editing.** The heartbeat tells the client when someone else has saved. If you have nothing unsaved, the newer version is loaded into your editor automatically, without an undo step and keeping your cursor. If you *do* have unsaved edits, nothing is overwritten: the version check still catches a true simultaneous edit. This makes conflicts rare without the complexity of a CRDT (e.g. Yjs), which is the next step if simultaneous typing matters.
+
+**Comments anchored by quoted text, not positions.** Document positions shift with every edit, and commenters can't edit the document to insert anchors. A comment stores the text it was made on, and a ProseMirror decoration plugin highlights where that text occurs (searching within one paragraph). The highlight follows the text as the document changes. If the text is edited away, the highlight disappears but the comment and its quote remain. The trade-off: a repeated phrase highlights its first occurrence.
+
+**History without noise.** Autosave writes every second or so while typing, so one snapshot per save would make history useless. Consecutive saves by the same author within 5 minutes update the latest entry instead. Milestones (created, imported, restored) are never merged into. Restoring creates a new version through the same conflict-checked write path as normal edits, so it can't overwrite a concurrent change and can itself be undone.
+
+**Export.** Markdown is generated on the server (Turndown with rules for strikethrough, underline and list formatting), so it's testable and consistent. PDF uses the browser's print engine with a print stylesheet. That gives selectable text and correct fonts without running a headless browser on a free-tier server. The trade-off is one extra click ("Save as PDF").
+
 ## Testing strategy
 
 The highest-value automated tests are API integration tests (Supertest against the real Express app and an in-memory SQLite). They exercise the real SQL (through the same libSQL client used in production), validation, sanitization and permission logic with no mocks, and run in about 2 s. The browser flows (formatting, autosave, reload, import, sharing between two users, conflict banner, mobile layout) were checked with a Playwright script during development; see AI_WORKFLOW.md.

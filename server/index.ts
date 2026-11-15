@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { dbConfigFromEnv, openDb, seedDemoDocuments } from "./db.js";
+import { dbConfigFromEnv, openDb } from "./db.js";
+import { seedDemoDocuments } from "./seed.js";
 import { createApp } from "./app.js";
 
 const port = Number(process.env.PORT ?? 3000);

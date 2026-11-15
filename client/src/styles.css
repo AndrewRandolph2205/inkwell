@@ -44,7 +44,9 @@ input:focus, select:focus, .btn:focus-visible, .tool:focus-visible { outline: 2p
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; }
 .user { display: flex; align-items: center; gap: 8px; }
-.avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 600; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: inline-grid; place-items: center; font-weight: 600; flex: none; font-size: 14px; }
+.avatar.small { width: 22px; height: 22px; font-size: 11px; }
+.avatar.ring { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ok); }
 
 .page { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
 .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
@@ -64,9 +66,14 @@ section h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; 
 .badge.owner { background: var(--accent-soft); color: #23419f; }
 .badge.editor { background: #e6f6ee; color: var(--ok); }
 .badge.viewer { background: var(--warn-soft); color: #8a5a00; }
+.badge.commenter { background: #f1e8fb; color: #6b2fa8; }
 
 .editor-page { padding: 0 16px 60px; }
-.doc-header { max-width: 850px; margin: 0 auto; display: flex; align-items: flex-start; gap: 8px; padding-top: 18px; }
+/* Back button | title + meta, with the action row under the title. */
+.doc-header { max-width: 850px; margin: 0 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: start; padding-top: 18px; }
+.doc-actions { grid-column: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 8px 0; }
+.doc-actions .presence { margin-left: auto; }
+.btn.active { background: var(--accent-soft); border-color: #c7d4ff; color: #23419f; }
 .title-wrap { flex: 1; min-width: 0; }
 .title-input { width: 100%; font-size: 22px; font-weight: 600; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; background: transparent; }
 .title-input:hover:not([readonly]) { border-color: var(--border); }
@@ -106,4 +113,75 @@ section h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; 
   .user-name { display: none; }
   .share-form { flex-wrap: wrap; }
   .date { margin-left: 0; }
+}
+
+/* ---------- side panels (comments, history) ---------- */
+.editor-page.with-panel { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 0 16px; }
+.side-panel { position: sticky; top: 51px; align-self: start; max-height: calc(100vh - 51px); overflow-y: auto; background: var(--surface); border-left: 1px solid var(--border); padding: 14px 16px 24px; margin-right: -16px; display: flex; flex-direction: column; gap: 10px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; }
+.panel-head h2 { margin: 0; font-size: 16px; }
+.comment-form { display: flex; flex-direction: column; gap: 8px; }
+.comment-form textarea { font: inherit; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; resize: vertical; }
+.comment-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.comment-form .btn { align-self: flex-end; }
+.quote-chip { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; background: #fff6cc; border-left: 3px solid #e0b100; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
+.comment-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.comment { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; cursor: pointer; background: var(--surface); }
+.comment:hover { border-color: #c9ced6; }
+.comment.active { border-color: #e0b100; box-shadow: 0 0 0 2px #fff0b3; }
+.comment.resolved { opacity: .7; }
+.comment-head { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+.comment-quote { margin: 8px 0 0; padding: 2px 8px; border-left: 3px solid #e0b100; color: #4b5260; font-size: 13px; }
+.comment-body { margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+.comment-actions { display: flex; gap: 12px; font-size: 13px; }
+.link.danger { color: var(--danger); }
+.empty-note { text-align: center; padding: 12px 0; }
+.paper .comment-hl { background: #fff0b3; border-bottom: 2px solid #e0b100; cursor: pointer; border-radius: 2px; }
+.paper .comment-hl.active { background: #ffe066; }
+
+.version-list { list-style: none; margin: 0; padding: 0; }
+.version { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border); padding: 10px 4px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
+.version:hover { background: #f6f7f9; }
+.version-time { display: flex; gap: 8px; align-items: center; font-weight: 500; }
+.preview-modal { max-width: 760px; max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+.preview-body { overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 24px; margin: 14px 0; line-height: 1.6; }
+.modal-foot { display: flex; gap: 10px; justify-content: flex-end; align-items: center; }
+.role-help { margin: 4px 0 0; color: var(--muted); }
+.role-help ul { margin: 6px 0; padding-left: 18px; }
+
+/* ---------- presence, menus, toast ---------- */
+.presence { display: flex; align-items: center; gap: 8px; }
+.presence-avatars { display: flex; }
+.presence-user { position: relative; margin-left: -6px; }
+.presence-user:first-child { margin-left: 0; }
+.presence-user .avatar { box-shadow: 0 0 0 2px var(--surface); }
+.presence-user .avatar.ring { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ok); }
+.typing-dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); border: 2px solid var(--surface); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+.presence-text { white-space: nowrap; }
+.menu-wrap { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0,0,0,.1); padding: 4px; min-width: 190px; }
+.menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.menu button:hover { background: #f0f2f5; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1d2330; color: #fff; padding: 10px 16px; border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0,0,0,.2); z-index: 30; font-size: 14px; }
+.print-only { display: none; }
+
+@media (max-width: 1100px) {
+  .editor-page.with-panel { display: block; }
+  /* align-self must be reset: browsers now apply it to fixed boxes, and "start" would shrink the
+     panel to its content instead of stretching it between top and bottom. */
+  .side-panel { position: fixed; top: 51px; right: 0; bottom: 0; width: min(380px, 100%); max-height: none; margin: 0; z-index: 15; align-self: stretch; box-shadow: -6px 0 24px rgba(0,0,0,.12); }
+}
+
+/* ---------- print / "Export → PDF" ---------- */
+@media print {
+  @page { margin: 18mm; }
+  body, :root { background: #fff; }
+  .topbar, .doc-header, .toolbar, .banner, .side-panel, .toast, .modal-backdrop { display: none !important; }
+  .editor-page, .editor-page.with-panel { display: block; padding: 0; }
+  .print-only { display: block; font-size: 26px; margin: 0 0 12px; }
+  .paper { border: 0; padding: 0; margin: 0; min-height: 0; max-width: none; }
+  .paper .ProseMirror { min-height: 0; }
+  .paper .comment-hl, .paper .comment-hl.active { background: none; border: 0; }
+  .paper .ProseMirror p.is-editor-empty:first-child::before { content: none; }
 }

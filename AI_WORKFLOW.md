@@ -23,12 +23,17 @@
   - The new production safety check (refuse to start without persistent storage) also broke local `npm start`, which runs in production mode. `npm start` now sets a local `DATABASE_PATH` explicitly.
   - A draft test for "deleting a document removes its shares" checked the API's *Shared with me* list. That list joins on `documents`, so it would pass even if orphaned share rows were left behind. The test now queries the shares table directly.
   - The code no longer relies on SQLite foreign-key cascades. Turso's HTTP protocol doesn't guarantee the per-connection pragma that enables them.
+- **The five enhancements** (presence and live updates, comments, version history, export, commenter role). The browser walkthrough of these found three bugs that the API tests and typecheck missed:
+  - **Escape didn't close the share dialog.** The handler was attached to the dialog element. Clicking *Share* briefly disables the button, which moves focus to `<body>`, so the keypress never reached the dialog. The original walkthrough hadn't caught this because it navigated away instead of pressing Escape. Fixed with a window-level listener, and the same for the history preview.
+  - **The comments/history panel only covered part of the screen on phones.** The desktop rule `align-self: start` also applies to fixed-position boxes in current Chromium, so the panel shrank to its content. Found by measuring the panel's computed size after a screenshot looked wrong.
+  - **Markdown export left whitespace-only lines between list items.** Found by an exact-output test rather than a "contains" check.
+  - The header also needed reworking once four new buttons squeezed the title. That was found in the screenshots, not by any test.
 - **Scope decisions.** Real-time co-editing (Yjs), a router library and a UI component library were left out. Each would add weight without improving what's being evaluated here.
 
 ## How correctness, UX and reliability were verified
 
 1. **Typecheck** (`tsc`, strict) across server and client after each change.
-2. **15 API integration tests** against the real app and SQLite: permissions, sanitization, validation, conflicts, imports, demo seeding, cleaning up shares on delete, and database config.
+2. **29 API integration tests** against the real app and SQLite: permissions, sanitization, validation, conflicts, imports, demo seeding, cleanup on delete, database config, and the enhancements (migrating an old-schema database, commenter permissions, comments, history grouping and restore, exact Markdown output, presence with an injected clock).
 3. **Scripted browser walkthrough** (Playwright, two users): log in → create → rename → apply each kind of formatting → wait for "Saved" → **reload and check every tag survived** → share with an unknown email (error shown) and with Bob as a viewer → import `.docx` and an unsupported `.pdf` (rejected) → Bob sees *Shared with me / View only* and gets a read-only editor with no toolbar → upgrade Bob to editor → Bob saves → Alice's stale edit shows the conflict banner.
 4. **Screenshots reviewed** at desktop and phone width (390 px) for layout, spacing and clarity of the status messages. This prompted tightening list spacing.
 5. **Live deployment test** (Render free + Turso), at https://inkwell-8o3b.onrender.com. The sandbox couldn't test against a real Turso database before deploy (no credentials, and the libSQL server binary couldn't be downloaded), so the same two-user walkthrough was rerun against the deployed app. Everything passed:
@@ -39,4 +44,12 @@
    - **Security:** the session cookie is `HttpOnly; Secure; SameSite=Lax`, so the HTTPS proxy setup works.
 
    The local script assumed near-instant saves. Live, the "✓ Saved" indicator could show before the last debounced edit had been sent, so the script now waits past the debounce first. The test uses clearly labeled documents and deletes them afterwards.
-6. **Restart test:** created a document over the API, restarted the server, confirmed the document and the login session were still there, and that deep links (`/d/1`) load after a refresh.
+6. **Three-user enhancement walkthrough** (Alice owner, Bob editor, Carol commenter, in separate browser contexts):
+   - **Presence and live updates:** Alice sees "Bob is editing", and Bob's saved text appears in Alice's editor without a reload and without a conflict.
+   - **Commenting:** Carol has a read-only editor, selects text, and comments on it; the text is highlighted. Alice's comment count updates by itself; clicking the highlight opens that comment, and resolving it removes the highlight.
+   - **History:** Alice previews her earlier version and restores it, and Bob's open editor picks up the restore.
+   - **Export:** the Markdown download is checked byte for byte, and the print-layout PDF is rendered and inspected.
+   - **Leaving and phones:** presence drops when Bob leaves, and the panel layout was checked at phone width.
+
+   This walkthrough was run locally.
+7. **Restart test:** created a document over the API, restarted the server, confirmed the document and the login session were still there, and that deep links (`/d/1`) load after a refresh.

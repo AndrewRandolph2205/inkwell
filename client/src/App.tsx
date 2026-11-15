@@ -4,6 +4,7 @@ import { navigate, usePath } from "./router";
 import { Login } from "./Login";
 import { DocList } from "./DocList";
 import { Editor } from "./Editor";
+import { Avatar } from "./Presence";
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
@@ -25,7 +26,7 @@ export function App() {
           <span className="logo" aria-hidden>✎</span> Inkwell
         </a>
         <div className="user">
-          <span className="avatar" aria-hidden>{user.name[0]}</span>
+          <Avatar id={user.id} name={user.name} />
           <span className="user-name">{user.name}</span>
           <button
             className="btn ghost"

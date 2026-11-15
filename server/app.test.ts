@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
-import { openDb, seedDemoDocuments, dbConfigFromEnv, SEED_PASSWORD, type DB } from "./db.js";
+import { openDb, dbConfigFromEnv, SEED_PASSWORD, type DB } from "./db.js";
+import { seedDemoDocuments } from "./seed.js";
 import { createApp } from "./app.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -190,16 +191,18 @@ describe("demo seed data", () => {
     expect(body.shared).toEqual([expect.objectContaining({ title: "Welcome to Inkwell", role: "editor", ownerName: "Alice Chen" })]);
     const carol = await login("carol@example.com");
     const carolDocs = (await carol.get("/api/documents")).body;
-    expect(carolDocs.shared).toEqual([expect.objectContaining({ title: "Welcome to Inkwell", role: "viewer" })]);
+    expect(carolDocs.shared).toEqual([expect.objectContaining({ title: "Welcome to Inkwell", role: "commenter" })]);
   });
 
-  it("deleting a document also removes its shares", async () => {
+  it("deleting a document also removes its shares, comments and history", async () => {
     await seedDemoDocuments(db);
     const alice = await login("alice@example.com");
     const welcome = (await alice.get("/api/documents")).body.owned[0];
     await alice.delete(`/api/documents/${welcome.id}`).expect(204);
-    const left = await db.execute({ sql: "SELECT COUNT(*) AS n FROM document_shares WHERE document_id = ?", args: [welcome.id] });
-    expect(left.rows[0].n).toBe(0);
+    for (const table of ["document_shares", "comments", "document_versions"]) {
+      const left = await db.execute({ sql: `SELECT COUNT(*) AS n FROM ${table} WHERE document_id = ?`, args: [welcome.id] });
+      expect(left.rows[0].n, table).toBe(0);
+    }
     const bob = await login("bob@example.com");
     expect((await bob.get("/api/documents")).body.shared).toEqual([]);
   });

@@ -1,6 +1,6 @@
 # Inkwell
 
-A small full-stack document editor: create and format documents in the browser, import `.txt` / `.md` / `.docx` files, and share documents with other users as **viewers** or **editors**.
+A small full-stack document editor: create and format documents in the browser, import `.txt` / `.md` / `.docx` files, share documents as **viewer**, **commenter** or **editor**, comment on selected text, see who else is in the document, browse and restore version history, and export to Markdown or PDF.
 
 **Stack:** React 18 + Tiptap (ProseMirror) · Node 22 + Express 5 · SQLite via libSQL (local file in development, [Turso](https://turso.tech) in production) · Vitest + Supertest
 
@@ -13,9 +13,19 @@ A small full-stack document editor: create and format documents in the browser, 
 | Documents | Create, rename (click the title), edit, delete (owner only). Autosave ~0.8 s after typing stops; **Ctrl/Cmd+S** saves immediately. A status shows *Unsaved changes / Saving… / ✓ Saved / Save failed (Retry)*. The browser warns before closing a tab with unsaved changes. |
 | Rich text | Bold, italic, underline, strikethrough, Heading 1–3, bulleted & numbered lists, block quotes, undo/redo, plus standard keyboard shortcuts. |
 | File upload | **Import file** turns an uploaded file into a new editable document. **Supported: `.txt`, `.md`, `.docx`, max 2 MB.** Other types are rejected with a clear message (checked in the browser *and* on the server). The document title comes from the file name; Word/Markdown headings, bold/italic and lists are kept. Images and tables in `.docx` are dropped (the editor doesn't support them). |
-| Sharing | Every document has one **owner**. The owner can share by email as *View only* or *Can edit*, change the access level, or remove access. The home page separates **My documents** from **Shared with me** (with owner name and access badge). Viewers get a read-only editor with no toolbar; the server enforces every rule, not just the UI. |
+| Sharing | Every document has one **owner**. The owner can share by email as *View only*, *Can comment* or *Can edit*, change the access level, or remove access. The home page separates **My documents** from **Shared with me** (with owner name and access badge). Viewers and commenters get a read-only editor with no toolbar; the server enforces every rule, not just the UI. |
 | Persistence | SQLite-compatible storage: a local file in development, a hosted Turso database in production. Content is stored as sanitized HTML, so formatting round-trips exactly. Documents, shares and login sessions survive refreshes, server restarts and redeploys. |
 | Concurrent edits | Each document has a version number. A save based on an outdated version is rejected (`409`) and the editor shows a "someone else saved this — reload" banner instead of silently overwriting the other person's work. |
+
+### Enhancements
+
+| Enhancement | What's implemented |
+|---|---|
+| **Real-time collaboration indicators** | Avatars of everyone else who has the document open, with a green ring and dot for anyone typing, and a summary like "Bob is editing". The header shows who made the last edit. When someone else saves and you have no unsaved changes, their version loads into your editor automatically (no reload; your cursor is kept; it isn't added to your undo history), with a short notice. |
+| **Commenting** | Select text, then open **Comments** to comment on it. The quoted text is highlighted in the document; clicking a highlight opens its comment. Comments can be resolved, reopened, and deleted by their author or the document owner. New comments from others appear within a few seconds. |
+| **Version history** | **History** lists saved versions, newest first, with author and time. A burst of autosaves by one person within 5 minutes is grouped into one entry, so the list stays readable. Created, imported and restored versions are always their own entries. Click any entry to preview it, and editors can **restore** it. A restore is itself a new entry, so it can be undone. |
+| **Export** | **Export → Markdown** downloads a `.md` file converted on the server (headings, bold, italic, lists, quotes, strikethrough; underline is kept as `<u>`, which Markdown lacks). **Export → PDF** opens the browser's print dialog with a print layout of just the title and content; choose "Save as PDF". |
+| **Role-based permissions** | Roles form a ladder; each can do everything the one before it can. **View only**: read, export, see comments and history. **Can comment**: also add and resolve comments. **Can edit**: also edit and restore versions. **Owner**: also share and delete. |
 
 ## Demo accounts
 
@@ -31,7 +41,7 @@ A brand-new database is also seeded with three documents so sharing is visible i
 
 | Document | Owner | Shared with |
 |---|---|---|
-| Welcome to Inkwell | Alice | Bob (can edit), Carol (view only) |
+| Welcome to Inkwell | Alice | Bob (can edit), Carol (can comment); includes a comment from Carol |
 | Team meeting notes | Bob | Alice (view only) |
 | Carol's private draft | Carol | nobody |
 
@@ -69,11 +79,13 @@ To reset all data, stop the server and delete `data/docs.db`.
 ## Tests
 
 ```bash
-npm test           # API integration tests (Vitest + Supertest, in-memory SQLite)
+npm test           # 29 API integration tests (Vitest + Supertest, in-memory SQLite)
 npm run typecheck  # tsc over server and client
 ```
 
 The tests drive the real Express app over HTTP and cover: auth required / bad credentials; create → rename → edit → reopen with formatting preserved; HTML sanitization (scripts and event handlers stripped); stale-write rejection (409); input validation; **the full owner / editor / viewer permission matrix** (including that non-shared users get 404 and that revoking access works); sharing edge cases; and importing `.md`, `.txt` and a real `.docx` fixture, plus rejection of unsupported, missing, corrupt and oversized files.
+
+`server/features.test.ts` covers the enhancements: upgrading a database created with the original schema without losing data, the commenter role's permissions, comment create/resolve/delete rules, history grouping (by author and by time) and restore (including conflicts), the exact Markdown output, and presence (heartbeats, the editing flag, expiry and leaving), using an injected clock.
 
 ## Deploy (free): Render + Turso
 
@@ -132,19 +144,24 @@ docker run -p 3000:3000 -e DATABASE_PATH=/data/docs.db -v inkwell-data:/data ink
 
 ```
 server/
-  app.ts         Express app: routes, validation (zod), access control, error handling
-  auth.ts        scrypt password hashing, cookie sessions
-  content.ts     HTML sanitization + .txt/.md/.docx → HTML conversion
-  db.ts          schema, Turso/local config, query helpers, demo seeding
-  passwords.ts   scrypt password hashing
-  index.ts       entry point
-  app.test.ts    API integration tests
-  fixtures/      sample.docx used by the tests
+  app.ts           Express app: routes, validation (zod), error handling
+  permissions.ts   role ladder and access checks (404 for no access, 403 for insufficient role)
+  documents.ts     create/delete documents, version history (grouping, milestones)
+  presence.ts      who has a document open (in-memory heartbeats)
+  exporters.ts     HTML → Markdown
+  content.ts       HTML sanitization + .txt/.md/.docx → HTML conversion
+  db.ts            migrations, Turso/local config, query helpers
+  seed.ts          demo documents for an empty database
+  auth.ts, passwords.ts, http.ts
+  index.ts         entry point
+  *.test.ts        API integration tests
+  fixtures/        sample.docx used by the tests
 client/src/
-  Editor.tsx     Tiptap editor, toolbar, autosave pipeline, conflict handling
-  DocList.tsx    home page: owned vs shared, create, import
-  ShareDialog.tsx
-  api.ts         typed fetch wrapper
+  Editor.tsx            editor page: autosave pipeline, conflicts, presence heartbeat, live updates
+  commentHighlights.ts  ProseMirror plugin that highlights commented text
+  CommentsPanel.tsx, HistoryPanel.tsx, Presence.tsx, Toolbar.tsx, ShareDialog.tsx
+  DocList.tsx           home page: owned vs shared, create, import
+  api.ts                typed fetch wrapper, role helpers
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions and [AI_WORKFLOW.md](AI_WORKFLOW.md) for how AI was used.

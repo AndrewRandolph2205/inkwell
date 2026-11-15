@@ -7,27 +7,16 @@ import { join } from "node:path";
 import { type DB, all, get, run } from "./db.js";
 import { SESSION_COOKIE, createSession, loadUser, requireUser } from "./auth.js";
 import { verifyPassword } from "./passwords.js";
+import { HttpError, idSchema, parse } from "./http.js";
+import { SHARE_ROLES, access, type DocRow, type Role } from "./permissions.js";
+import {
+  createDocument, deleteDocument, getVersion, lastEditor, listVersions, recordEdit, recordMilestone,
+} from "./documents.js";
+import { PresenceTracker } from "./presence.js";
+import { exportFilename, toMarkdown } from "./exporters.js";
 import {
   ImportError, MAX_UPLOAD_BYTES, SUPPORTED_IMPORT_TYPES, fileToDocument, sanitizeContent,
 } from "./content.js";
-
-type Role = "owner" | "editor" | "viewer";
-
-interface DocRow {
-  id: number;
-  owner_id: number;
-  title: string;
-  content: string;
-  version: number;
-  created_at: string;
-  updated_at: string;
-}
-
-class HttpError extends Error {
-  constructor(public status: number, message: string, public extra?: Record<string, unknown>) {
-    super(message);
-  }
-}
 
 const CONFLICT_MESSAGE = "This document was changed elsewhere. Reload to get the latest version.";
 
@@ -44,38 +33,41 @@ const updateSchema = z
     baseVersion: z.number().int().positive(),
   })
   .refine((v) => v.title !== undefined || v.content !== undefined, "Nothing to update.");
+const restoreSchema = z.object({ baseVersion: z.number().int().positive() });
 const shareSchema = z.object({
   email: z.string().trim().email("Enter a valid email."),
-  role: z.enum(["viewer", "editor"]),
+  role: z.enum(SHARE_ROLES, { message: "Role must be viewer, commenter or editor." }),
 });
-const idSchema = z.coerce.number().int().positive();
+const commentSchema = z.object({
+  body: z.string().trim().min(1, "Comment cannot be empty.").max(2000, "Comment is too long (max 2000)."),
+  quote: z.string().trim().max(500, "Selected text is too long to quote (max 500).").optional(),
+});
+const commentUpdateSchema = z.object({ resolved: z.boolean() });
+const presenceSchema = z.object({ editing: z.boolean().default(false) });
 
-function parse<T>(schema: z.ZodType<T>, value: unknown): T {
-  const r = schema.safeParse(value);
-  if (!r.success) throw new HttpError(400, r.error.issues[0]?.message ?? "Invalid request.");
-  return r.data;
+interface CommentRow {
+  id: number;
+  body: string;
+  quote: string | null;
+  resolved: number;
+  createdAt: string;
+  authorId: number;
+  authorName: string;
 }
 
-// Express 5 forwards rejected promises from async handlers to the error middleware.
-export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: boolean } = {}) {
+export function createApp(
+  db: DB,
+  opts: { staticDir?: string; secureCookies?: boolean; presence?: PresenceTracker } = {},
+) {
   const app = express();
+  const presence = opts.presence ?? new PresenceTracker();
   app.use(express.json({ limit: "2mb" }));
   app.use(cookieParser());
   app.use(loadUser(db));
 
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
-
-  /** Resolve the caller's role on a document, or throw 404 (we don't reveal existence to outsiders). */
-  async function access(docId: number, userId: number): Promise<{ doc: DocRow; role: Role }> {
-    const doc = await get<DocRow>(db, "SELECT * FROM documents WHERE id = ?", [docId]);
-    if (!doc) throw new HttpError(404, "Document not found.");
-    if (doc.owner_id === userId) return { doc, role: "owner" };
-    const share = await get<{ role: Role }>(
-      db, "SELECT role FROM document_shares WHERE document_id = ? AND user_id = ?", [docId, userId],
-    );
-    if (!share) throw new HttpError(404, "Document not found.");
-    return { doc, role: share.role };
-  }
+  const uid = (req: Request) => req.user!.id;
+  const docIdOf = (req: Request) => parse(idSchema, req.params.id);
 
   function listShares(docId: number) {
     return all(
@@ -101,9 +93,31 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
     };
   }
 
-  async function insertDoc(ownerId: number, title: string, content: string) {
-    const r = await run(db, "INSERT INTO documents (owner_id, title, content) VALUES (?, ?, ?)", [ownerId, title, content]);
-    return r.lastInsertRowid;
+  async function listComments(docId: number) {
+    const rows = await all<CommentRow>(
+      db,
+      `SELECT c.id, c.body, c.quote, c.resolved, c.created_at AS createdAt, u.id AS authorId, u.name AS authorName
+       FROM comments c JOIN users u ON u.id = c.author_id WHERE c.document_id = ? ORDER BY c.id`,
+      [docId],
+    );
+    return rows.map((c) => ({
+      id: c.id, body: c.body, quote: c.quote, resolved: !!c.resolved, createdAt: c.createdAt,
+      author: { id: c.authorId, name: c.authorName },
+    }));
+  }
+
+  /** Conflict-checked write of title/content; returns the new version number. */
+  async function writeDoc(doc: DocRow, baseVersion: number, title: string, content: string) {
+    if (baseVersion !== doc.version) throw new HttpError(409, CONFLICT_MESSAGE, { currentVersion: doc.version });
+    // The version check is repeated in the UPDATE itself, so two racing writers can't both win.
+    const r = await run(
+      db,
+      `UPDATE documents SET title = ?, content = ?, version = version + 1, updated_at = datetime('now')
+       WHERE id = ? AND version = ?`,
+      [title, content, doc.id, doc.version],
+    );
+    if (r.changes === 0) throw new HttpError(409, CONFLICT_MESSAGE);
+    return doc.version + 1;
   }
 
   // ---------- auth ----------
@@ -135,21 +149,20 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
   app.use("/api/documents", requireUser);
 
   app.get("/api/documents", async (req, res) => {
-    const uid = req.user!.id;
     const [owned, shared] = await Promise.all([
       all(
         db,
         `SELECT d.id, d.title, d.updated_at AS updatedAt,
                 (SELECT COUNT(*) FROM document_shares s WHERE s.document_id = d.id) AS shareCount
          FROM documents d WHERE d.owner_id = ? ORDER BY d.updated_at DESC, d.id DESC`,
-        [uid],
+        [uid(req)],
       ),
       all(
         db,
         `SELECT d.id, d.title, d.updated_at AS updatedAt, s.role, u.name AS ownerName, u.email AS ownerEmail
          FROM document_shares s JOIN documents d ON d.id = s.document_id JOIN users u ON u.id = d.owner_id
          WHERE s.user_id = ? ORDER BY d.updated_at DESC, d.id DESC`,
-        [uid],
+        [uid(req)],
       ),
     ]);
     res.json({ owned, shared });
@@ -157,8 +170,8 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
 
   app.post("/api/documents", async (req, res) => {
     const { title } = parse(createSchema, req.body ?? {});
-    const id = await insertDoc(req.user!.id, title ?? "Untitled document", "");
-    const { doc, role } = await access(id, req.user!.id);
+    const id = await createDocument(db, uid(req), title ?? "Untitled document", "");
+    const { doc, role } = await access(db, id, uid(req));
     res.status(201).json(await serializeDoc(doc, role));
   });
 
@@ -180,69 +193,45 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
         if (e instanceof ImportError) throw new HttpError(400, e.message);
         throw e;
       }
-      const id = await insertDoc(req.user!.id, parsed.title, parsed.content);
-      const { doc, role } = await access(id, req.user!.id);
+      const id = await createDocument(db, uid(req), parsed.title, parsed.content, `Imported from ${req.file.originalname}`);
+      const { doc, role } = await access(db, id, uid(req));
       res.status(201).json(await serializeDoc(doc, role));
     },
   );
 
   app.get("/api/documents/:id", async (req, res) => {
-    const { doc, role } = await access(parse(idSchema, req.params.id), req.user!.id);
+    const { doc, role } = await access(db, docIdOf(req), uid(req));
     res.json(await serializeDoc(doc, role));
   });
 
   app.patch("/api/documents/:id", async (req, res) => {
-    const id = parse(idSchema, req.params.id);
+    const id = docIdOf(req);
     const body = parse(updateSchema, req.body);
-    const { doc, role } = await access(id, req.user!.id);
-    if (role === "viewer") throw new HttpError(403, "You have view-only access to this document.");
-    // Optimistic concurrency: reject writes based on a stale copy instead of silently overwriting.
-    if (body.baseVersion !== doc.version) {
-      throw new HttpError(409, CONFLICT_MESSAGE, { currentVersion: doc.version });
-    }
+    const { doc } = await access(db, id, uid(req), "edit");
     const title = body.title ?? doc.title;
     const content = body.content !== undefined ? sanitizeContent(body.content) : doc.content;
-    // The version check is repeated in the UPDATE itself, so two racing writers can't both win.
-    const r = await run(
-      db,
-      `UPDATE documents SET title = ?, content = ?, version = version + 1, updated_at = datetime('now')
-       WHERE id = ? AND version = ?`,
-      [title, content, id, doc.version],
-    );
-    if (r.changes === 0) throw new HttpError(409, CONFLICT_MESSAGE);
-    const updated = await access(id, req.user!.id);
+    const version = await writeDoc(doc, body.baseVersion, title, content);
+    await recordEdit(db, { docId: id, version, title, content, authorId: uid(req) });
+    const updated = await access(db, id, uid(req));
     res.json(await serializeDoc(updated.doc, updated.role));
   });
 
   app.delete("/api/documents/:id", async (req, res) => {
-    const id = parse(idSchema, req.params.id);
-    const { role } = await access(id, req.user!.id);
-    if (role !== "owner") throw new HttpError(403, "Only the owner can delete this document.");
-    await db.batch(
-      [
-        { sql: "DELETE FROM document_shares WHERE document_id = ?", args: [id] },
-        { sql: "DELETE FROM documents WHERE id = ?", args: [id] },
-      ],
-      "write",
-    );
+    const id = docIdOf(req);
+    await access(db, id, uid(req), "manage", "Only the owner can delete this document.");
+    await deleteDocument(db, id);
+    presence.forgetDocument(id);
     res.status(204).end();
   });
 
   // ---------- sharing (owner only) ----------
-  async function requireOwner(req: Request) {
-    const id = parse(idSchema, req.params.id);
-    const { doc, role } = await access(id, req.user!.id);
-    if (role !== "owner") throw new HttpError(403, "Only the owner can manage sharing.");
-    return doc;
-  }
-
   app.get("/api/documents/:id/shares", async (req, res) => {
-    const doc = await requireOwner(req);
+    const { doc } = await access(db, docIdOf(req), uid(req), "manage", "Only the owner can manage sharing.");
     res.json(await listShares(doc.id));
   });
 
   app.post("/api/documents/:id/shares", async (req, res) => {
-    const doc = await requireOwner(req);
+    const { doc } = await access(db, docIdOf(req), uid(req), "manage", "Only the owner can manage sharing.");
     const { email, role } = parse(shareSchema, req.body);
     const target = await get<{ id: number }>(db, "SELECT id FROM users WHERE email = ?", [email]);
     if (!target) throw new HttpError(404, `No user with email ${email}.`);
@@ -257,10 +246,116 @@ export function createApp(db: DB, opts: { staticDir?: string; secureCookies?: bo
   });
 
   app.delete("/api/documents/:id/shares/:userId", async (req, res) => {
-    const doc = await requireOwner(req);
+    const { doc } = await access(db, docIdOf(req), uid(req), "manage", "Only the owner can manage sharing.");
     const userId = parse(idSchema, req.params.userId);
     await run(db, "DELETE FROM document_shares WHERE document_id = ? AND user_id = ?", [doc.id, userId]);
+    presence.leave(doc.id, userId);
     res.json(await listShares(doc.id));
+  });
+
+  // ---------- version history ----------
+  app.get("/api/documents/:id/versions", async (req, res) => {
+    const { doc } = await access(db, docIdOf(req), uid(req));
+    res.json(await listVersions(db, doc.id));
+  });
+
+  app.get("/api/documents/:id/versions/:versionId", async (req, res) => {
+    const { doc } = await access(db, docIdOf(req), uid(req));
+    const v = await getVersion(db, doc.id, parse(idSchema, req.params.versionId));
+    if (!v) throw new HttpError(404, "Version not found.");
+    res.json(v);
+  });
+
+  app.post("/api/documents/:id/versions/:versionId/restore", async (req, res) => {
+    const id = docIdOf(req);
+    const { baseVersion } = parse(restoreSchema, req.body);
+    const { doc } = await access(db, id, uid(req), "edit");
+    const v = await getVersion(db, id, parse(idSchema, req.params.versionId));
+    if (!v) throw new HttpError(404, "Version not found.");
+    const version = await writeDoc(doc, baseVersion, v.title, v.content);
+    // A restore is itself a history entry, so it can be undone by restoring the entry before it.
+    await recordMilestone(db, {
+      docId: id, version, title: v.title, content: v.content, authorId: uid(req), note: "Restored an earlier version",
+    });
+    const updated = await access(db, id, uid(req));
+    res.json(await serializeDoc(updated.doc, updated.role));
+  });
+
+  // ---------- comments ----------
+  app.get("/api/documents/:id/comments", async (req, res) => {
+    const { doc } = await access(db, docIdOf(req), uid(req));
+    res.json(await listComments(doc.id));
+  });
+
+  app.post("/api/documents/:id/comments", async (req, res) => {
+    const { doc } = await access(db, docIdOf(req), uid(req), "comment");
+    const { body, quote } = parse(commentSchema, req.body);
+    await run(db, "INSERT INTO comments (document_id, author_id, body, quote) VALUES (?, ?, ?, ?)", [
+      doc.id, uid(req), body, quote || null,
+    ]);
+    res.status(201).json(await listComments(doc.id));
+  });
+
+  async function findComment(docId: number, commentId: number) {
+    const c = await get<{ id: number; author_id: number }>(
+      db, "SELECT id, author_id FROM comments WHERE id = ? AND document_id = ?", [commentId, docId],
+    );
+    if (!c) throw new HttpError(404, "Comment not found.");
+    return c;
+  }
+
+  app.patch("/api/documents/:id/comments/:commentId", async (req, res) => {
+    const { doc } = await access(db, docIdOf(req), uid(req), "comment");
+    const c = await findComment(doc.id, parse(idSchema, req.params.commentId));
+    const { resolved } = parse(commentUpdateSchema, req.body);
+    await run(db, "UPDATE comments SET resolved = ? WHERE id = ?", [resolved ? 1 : 0, c.id]);
+    res.json(await listComments(doc.id));
+  });
+
+  app.delete("/api/documents/:id/comments/:commentId", async (req, res) => {
+    const { doc, role } = await access(db, docIdOf(req), uid(req));
+    const c = await findComment(doc.id, parse(idSchema, req.params.commentId));
+    if (c.author_id !== uid(req) && role !== "owner") {
+      throw new HttpError(403, "Only the comment's author or the document owner can delete it.");
+    }
+    await run(db, "DELETE FROM comments WHERE id = ?", [c.id]);
+    res.json(await listComments(doc.id));
+  });
+
+  // ---------- export ----------
+  app.get("/api/documents/:id/export.md", async (req, res) => {
+    const { doc } = await access(db, docIdOf(req), uid(req));
+    const name = exportFilename(doc.title, "md");
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    );
+    res.send(toMarkdown(doc.title, doc.content));
+  });
+
+  // ---------- presence (who else has this document open) ----------
+  app.post("/api/documents/:id/presence", async (req, res) => {
+    const { doc } = await access(db, docIdOf(req), uid(req));
+    const { editing } = parse(presenceSchema, req.body ?? {});
+    presence.touch(doc.id, req.user!, editing);
+    const [editor, open] = await Promise.all([
+      lastEditor(db, doc.id),
+      get<{ n: number }>(db, "SELECT COUNT(*) AS n FROM comments WHERE document_id = ? AND resolved = 0", [doc.id]),
+    ]);
+    res.json({
+      users: presence.list(doc.id),
+      version: doc.version,
+      updatedAt: doc.updated_at,
+      lastEditor: editor,
+      openComments: open?.n ?? 0,
+    });
+  });
+
+  app.delete("/api/documents/:id/presence", async (req, res) => {
+    const id = docIdOf(req);
+    presence.leave(id, uid(req));
+    res.status(204).end();
   });
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
