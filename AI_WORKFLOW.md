@@ -1,7 +1,5 @@
 # AI-native workflow note
 
-> Draft written from the build session's log. Edit it to add your own perspective before submitting.
-
 ## Tools used
 
 - **Claude Code** (agentic coding in a cloud sandbox). Used for scaffolding, implementation, tests, browser verification and docs.
