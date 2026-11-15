@@ -6,7 +6,7 @@ Start with [`START_HERE.md`](START_HERE.md): every link, the test accounts, a sh
 
 | | |
 |---|---|
-| **Google Drive (all materials)** | https://drive.google.com/file/d/1Dst1B4fXvAnuoB6dDFWPQaUYV4mLoXq5/view?usp=share_link |
+| **Google Drive (all materials)** | https://drive.google.com/drive/folders/1NyEaMd7k0CO3qaYAr34wgFmNk9Qdb-EO?usp=share_link |
 | **Live product** | https://inkwell-8o3b.onrender.com |
 | **Walkthrough video** | https://www.loom.com/share/da198bc45d3c4b2bafa70a7f33ccdd90 (also in [`VIDEO_URL.txt`](VIDEO_URL.txt)) |
 | **Source repository** | https://github.com/AndrewRandolph2205/inkwell |
