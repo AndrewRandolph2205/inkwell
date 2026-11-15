@@ -1,0 +1,14 @@
+# One-click deploy on Render: Dashboard → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: inkwell
+    runtime: docker
+    plan: starter          # persistent disks need a paid instance; see README for the free-tier caveat
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_PATH
+        value: /data/docs.db
+    disk:
+      name: inkwell-data
+      mountPath: /data
+      sizeGB: 1
