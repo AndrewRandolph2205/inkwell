@@ -2,8 +2,11 @@
 
 A small collaborative document editor: rich-text editing, file import, sharing with roles, persistence, comments, presence, version history and export.
 
+Start with [`START_HERE.md`](START_HERE.md): every link, the test accounts, a sharing walkthrough, and local setup, on one page.
+
 | | |
 |---|---|
+| **Google Drive (all materials)** | https://drive.google.com/file/d/1Dst1B4fXvAnuoB6dDFWPQaUYV4mLoXq5/view?usp=share_link |
 | **Live product** | https://inkwell-8o3b.onrender.com |
 | **Walkthrough video** | https://www.loom.com/share/da198bc45d3c4b2bafa70a7f33ccdd90 (also in [`VIDEO_URL.txt`](VIDEO_URL.txt)) |
 | **Source repository** | https://github.com/AndrewRandolph2205/inkwell |
@@ -15,6 +18,7 @@ The live app runs on Render's free plan, so the first visit after about 15 idle 
 
 | Requirement | Where it is |
 |---|---|
+| One page with every link, credentials and local setup | [`START_HERE.md`](START_HERE.md) |
 | The source code | `server/` (API), `client/` (web app), plus `package.json`, `package-lock.json`, config files, `Dockerfile` and `render.yaml`. See the full list below. |
 | `README.md` with local setup and run instructions | [`README.md`](README.md): *Run locally*, *Tests*, *Deploy* |
 | Short architecture note | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
@@ -22,6 +26,7 @@ The live app runs on Render's free plan, so the first visit after about 15 idle 
 | `SUBMISSION.md` listing what is included | This file |
 | Live product URL | https://inkwell-8o3b.onrender.com (also at the top of `README.md` and in `VIDEO_URL.txt`) |
 | Text file with the walkthrough video URL | [`VIDEO_URL.txt`](VIDEO_URL.txt) |
+| Credentials / test accounts for sharing | Three demo users, password `password123`: see the table above and [`START_HERE.md`](START_HERE.md#3-test-accounts-and-reviewing-sharing) |
 | Screenshots / demo GIF | [`docs/screenshots/`](docs/screenshots/) (7 screenshots) and [`docs/demo.gif`](docs/demo.gif). Sharing needs one browser session per user (e.g. a normal and a private window); the GIF shows two users side by side. |
 
 ## Testing it in 3 minutes
@@ -57,6 +62,7 @@ AI_WORKFLOW.md  # AI workflow note
 ARCHITECTURE.md  # architecture note
 Dockerfile  # production container image
 README.md  # setup, run, test and deploy instructions; features; screenshots
+START_HERE.md  # one page with every link, the test accounts and local setup
 SUBMISSION.md  # this file
 VIDEO_URL.txt  # walkthrough video URL (and live URL)
 client/index.html
@@ -106,4 +112,4 @@ vite.config.ts
 vitest.config.ts
 ```
 
-53 files.
+54 files.

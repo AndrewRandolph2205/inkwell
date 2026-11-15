@@ -8,7 +8,7 @@ A small full-stack document editor: create and format documents in the browser, 
 
 **Walkthrough video:** https://www.loom.com/share/da198bc45d3c4b2bafa70a7f33ccdd90
 
-**What's in this submission:** see [SUBMISSION.md](SUBMISSION.md).
+**Reviewers:** start with [START_HERE.md](START_HERE.md) (links, test accounts, sharing walkthrough, local setup). [SUBMISSION.md](SUBMISSION.md) lists everything included.
 
 ![Alice and Bob editing the same document: Bob's list appears in Alice's editor, with presence indicators on both sides](docs/demo.gif)
 
